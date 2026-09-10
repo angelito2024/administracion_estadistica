@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .input {
+    @apply w-full border border-slate-300 rounded-md px-2 py-1.5 text-sm bg-white
+           focus:outline-none focus:border-pnp-verde focus:ring-1 focus:ring-pnp-verde;
+  }
+}
+
+body {
+  margin: 0;
+  background: #f1f5f9;
+}
