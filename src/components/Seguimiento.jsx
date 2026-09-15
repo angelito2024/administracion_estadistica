@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, CalendarClock, MessageSquare, ChevronDown, ChevronRight } from "lucide-react";
+import { X, CalendarClock, MessageSquare, ChevronDown, ChevronRight, PauseCircle } from "lucide-react";
 import { todayStr, fmtDate, diffDays } from "../lib/fechas";
 import CampoTexto from "./CampoTexto";
 
@@ -25,6 +25,47 @@ export function BarraAvance({ valor = 0 }) {
   );
 }
 
+/**
+ * Devuelve la tarea con la nueva fecha limite y el cambio anotado en el historial.
+ * Conserva la primera fecha en `fechaOriginal` y cuenta cuantos dias llevaba vencida al moverla.
+ * Si la fecha no cambia, devuelve la tarea tal cual.
+ */
+export function reprogramarTarea(tarea, nuevaFecha, motivo = "") {
+  if (!nuevaFecha || nuevaFecha === tarea.dueDate) return tarea;
+  const hoy = todayStr();
+  const atrasoDias = Math.max(diffDays(tarea.dueDate, hoy), 0) || 0;
+  return {
+    ...tarea,
+    dueDate: nuevaFecha,
+    fechaOriginal: tarea.fechaOriginal || tarea.dueDate,
+    reprogramaciones: [
+      ...(tarea.reprogramaciones || []),
+      { de: tarea.dueDate, a: nuevaFecha, fecha: hoy, motivo, atrasoDias },
+    ],
+  };
+}
+
+// Dias de atraso de una reprogramacion; los registros antiguos no lo traen guardado.
+function atrasoDe(r) {
+  if (typeof r.atrasoDias === "number") return r.atrasoDias;
+  return Math.max(diffDays(r.de, r.fecha), 0) || 0;
+}
+
+/** True si hoy ya se dejo constancia de "sin avance" en esta tarea. */
+export function sinAvanceHoy(tarea) {
+  const hoy = todayStr();
+  return (tarea.seguimiento || []).some((h) => h.sinAvance && h.fecha === hoy);
+}
+
+/** Cuantos controles "sin avance" tiene la tarea y cuantos van seguidos al final. */
+export function controlesSinAvance(tarea) {
+  const historial = tarea.seguimiento || [];
+  const total = historial.filter((h) => h.sinAvance).length;
+  let seguidos = 0;
+  for (let i = historial.length - 1; i >= 0 && historial[i].sinAvance; i--) seguidos++;
+  return { total, seguidos };
+}
+
 /** Ultima observacion registrada y aviso de reprogramaciones. */
 export function ResumenSeguimiento({ tarea }) {
   const [abierto, setAbierto] = useState(false);
@@ -33,6 +74,9 @@ export function ResumenSeguimiento({ tarea }) {
   if (!historial.length && !repro.length) return null;
 
   const ultima = historial[historial.length - 1];
+  const fueraDePlazo = repro.filter((r) => atrasoDe(r) > 0).length;
+  const sinAvance = controlesSinAvance(tarea);
+  const Flecha = abierto ? ChevronDown : ChevronRight;
 
   return (
     <div className="mt-1.5">
@@ -42,17 +86,39 @@ export function ResumenSeguimiento({ tarea }) {
             onClick={() => setAbierto(!abierto)}
             className="flex items-start gap-1 text-xs text-slate-600 text-left hover:text-slate-900"
           >
-            {abierto ? <ChevronDown size={12} className="mt-0.5 shrink-0" /> : <ChevronRight size={12} className="mt-0.5 shrink-0" />}
-            <MessageSquare size={12} className="mt-0.5 shrink-0 text-slate-400" />
+            <Flecha size={12} className="mt-0.5 shrink-0" />
+            {ultima.sinAvance ? (
+              <PauseCircle size={12} className="mt-0.5 shrink-0 text-rose-500" />
+            ) : (
+              <MessageSquare size={12} className="mt-0.5 shrink-0 text-slate-400" />
+            )}
             <span>
-              <b className="font-medium">{fmtDate(ultima.fecha)}:</b> {ultima.texto || `avance ${ultima.avance}%`}
+              <b className="font-medium">{fmtDate(ultima.fecha)}:</b>{" "}
+              {ultima.sinAvance ? (
+                <span className="text-rose-700">sin avance, sigue en {ultima.avance}%</span>
+              ) : (
+                ultima.texto || `avance ${ultima.avance}%`
+              )}
             </span>
           </button>
         )}
-        {repro.length > 0 && (
-          <span className="flex items-center gap-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
-            <CalendarClock size={11} /> Reprogramada {repro.length} {repro.length === 1 ? "vez" : "veces"}
+        {sinAvance.total > 0 && (
+          <span className="flex items-center gap-1 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+            <PauseCircle size={11} /> {sinAvance.total} control(es) sin avance
+            {sinAvance.seguidos > 1 && ` · ${sinAvance.seguidos} seguidos`}
           </span>
+        )}
+        {repro.length > 0 && (
+          <button
+            onClick={() => setAbierto(!abierto)}
+            title="Ver historial de fechas"
+            className="flex items-center gap-1 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 hover:bg-amber-100"
+          >
+            {!ultima && <Flecha size={11} />}
+            <CalendarClock size={11} /> Reprogramada {repro.length} {repro.length === 1 ? "vez" : "veces"}
+            {fueraDePlazo > 0 && ` · ${fueraDePlazo} fuera de plazo`}
+            {tarea.fechaOriginal && ` · original ${fmtDate(tarea.fechaOriginal)}`}
+          </button>
         )}
       </div>
 
@@ -61,15 +127,29 @@ export function ResumenSeguimiento({ tarea }) {
           {[...historial].reverse().map((h) => (
             <div key={h.id} className="text-xs">
               <span className="text-slate-500">{fmtDate(h.fecha)}</span>
-              <span className="text-slate-400"> · avance {h.avance}%</span>
+              {h.sinAvance ? (
+                <span className="text-rose-700"> · sin avance, sigue en {h.avance}%</span>
+              ) : (
+                <span className="text-slate-400"> · avance {h.avance}%</span>
+              )}
               {h.texto && <p className="text-slate-700">{h.texto}</p>}
             </div>
           ))}
-          {repro.map((r, i) => (
-            <div key={`r${i}`} className="text-xs text-amber-800">
-              <span>{fmtDate(r.fecha)}</span> · movida del {fmtDate(r.de)} al {fmtDate(r.a)}
-            </div>
-          ))}
+          {[...repro].reverse().map((r, i) => {
+            const atraso = atrasoDe(r);
+            return (
+              <div key={`r${i}`} className="text-xs text-amber-800">
+                <span className="text-slate-500">{fmtDate(r.fecha)}</span> · fecha movida del{" "}
+                <b className="font-medium">{fmtDate(r.de)}</b> al <b className="font-medium">{fmtDate(r.a)}</b>
+                {atraso > 0 ? (
+                  <span className="text-rose-700"> · iba {atraso} dia(s) vencida</span>
+                ) : (
+                  <span className="text-slate-400"> · a tiempo</span>
+                )}
+                {r.motivo && <p className="text-slate-700">{r.motivo}</p>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

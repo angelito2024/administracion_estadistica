@@ -9,6 +9,7 @@ import {
   Archive,
   Users,
   ShieldCheck,
+  LogOut,
 } from "lucide-react";
 import { fmtDate, todayStr } from "../lib/fechas";
 
@@ -45,7 +46,7 @@ export function Emblema({ size = 46 }) {
   );
 }
 
-export default function Portada({ tab, setTab, overdueCount, docsVencidos = 0, alertaRespaldo }) {
+export default function Portada({ tab, setTab, overdueCount, docsVencidos = 0, alertaRespaldo, onSalir }) {
   const tabs = [
     { id: "panel", label: "Panel", icon: LayoutDashboard },
     { id: "tareas", label: "Tareas", icon: ClipboardList },
@@ -77,6 +78,15 @@ export default function Portada({ tab, setTab, overdueCount, docsVencidos = 0, a
             <p className="text-[10px] tracking-[0.14em] text-pnp-oro uppercase leading-tight">Dios · Patria · Ley</p>
             <p className="text-xs text-emerald-100/80 leading-tight mt-0.5">{fmtDate(todayStr())}</p>
           </div>
+          {onSalir && (
+            <button
+              onClick={onSalir}
+              title="Cerrar sesion"
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded border border-emerald-100/40 text-emerald-50 hover:bg-white/10 shrink-0"
+            >
+              <LogOut size={14} /> <span className="hidden sm:inline">Salir</span>
+            </button>
+          )}
         </div>
         <div className="h-1 bg-gradient-to-r from-pnp-oro via-pnp-oro-claro to-pnp-oro" />
       </div>

@@ -1,15 +1,18 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, Trash2, Check, Clock, AlertTriangle, Phone, Mail, X, Pencil, Cake, Archive, Settings2, MapPin, Target, Activity } from "lucide-react";
+import { Plus, Trash2, Check, Clock, AlertTriangle, Phone, Mail, X, Pencil, Cake, Archive, Settings2, MapPin, Target, Activity, CalendarClock, PauseCircle } from "lucide-react";
 import Portada from "./components/Portada";
 import Desempeno from "./components/Desempeno";
 import RespaldoTab from "./components/Respaldo";
 import Documentos, { documentosVencidos, documentosPorResponder } from "./components/Documentos";
 import Locadores, { locadoresPendientes, contratosPorVencer } from "./components/Locadores";
+import { locadoresIniciales } from "./lib/locadores";
 import Consolidado from "./components/Consolidado";
-import { BarraAvance, ResumenSeguimiento, ModalAvance } from "./components/Seguimiento";
+import { BarraAvance, ResumenSeguimiento, ModalAvance, reprogramarTarea, sinAvanceHoy } from "./components/Seguimiento";
 import CampoTexto, { CorreccionProvider } from "./components/CampoTexto";
 import { todayStr, monthKey, diffDays, daysDiff, uid, fmtDate, monthLabel, last6Months } from "./lib/fechas";
 import { guardarCopiaDiaria } from "./lib/respaldo";
+import PantallaAcceso, { CuentaAcceso } from "./components/Acceso";
+import { sesionActiva, cerrarSesion } from "./lib/acceso";
 
 const STORAGE_KEY = "gestion-oficina-data";
 
@@ -51,19 +54,35 @@ export default function GestionOficina() {
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("panel");
   const [error, setError] = useState("");
+  const [autenticado, setAutenticado] = useState(() => sesionActiva());
+
+  function salir() {
+    cerrarSesion();
+    setAutenticado(false);
+    setTab("panel");
+  }
 
   useEffect(() => {
     (async () => {
       try {
         const res = await storage.get(STORAGE_KEY, false);
-        if (res && res.value) {
-          const parsed = JSON.parse(res.value);
-          setData({
-            ...emptyData,
-            ...parsed,
-            categories: parsed.categories && parsed.categories.length ? parsed.categories : DEFAULT_CATEGORIES,
-          });
+        const parsed = res && res.value ? JSON.parse(res.value) : {};
+        let inicial = {
+          ...emptyData,
+          ...parsed,
+          categories: parsed.categories && parsed.categories.length ? parsed.categories : DEFAULT_CATEGORIES,
+        };
+        // Carga por unica vez los locadores de CONTRATO.xlsx y PAGOS.xlsx. La marca en
+        // settings evita que vuelvan a aparecer si mas adelante se eliminan a proposito.
+        if (!inicial.settings?.locadoresCargados && !inicial.locadores.length) {
+          inicial = {
+            ...inicial,
+            locadores: locadoresIniciales(),
+            settings: { ...(inicial.settings || {}), locadoresCargados: todayStr() },
+          };
+          await storage.set(STORAGE_KEY, JSON.stringify(inicial), false);
         }
+        setData(inicial);
       } catch (e) {
         // no data yet
       } finally {
@@ -103,6 +122,10 @@ export default function GestionOficina() {
   const dueSoonTasks = data.tasks.filter((t) => t.status !== "completado" && daysDiff(t.dueDate) >= 0 && daysDiff(t.dueDate) <= 3);
   const pendingTasks = data.tasks.filter((t) => t.status !== "completado");
 
+  if (!autenticado) {
+    return <PantallaAcceso onEntrar={() => setAutenticado(true)} />;
+  }
+
   if (!loaded) {
     return <div style={{ padding: "2rem", color: "#64748b", fontSize: 14 }}>Cargando…</div>;
   }
@@ -116,6 +139,7 @@ export default function GestionOficina() {
         overdueCount={overdueTasks.length}
         docsVencidos={docsVencidos.length}
         alertaRespaldo={alertaRespaldo}
+        onSalir={salir}
       />
       {error && (
         <div className="mx-4 mt-3 text-sm text-rose-800 bg-rose-50 border border-rose-200 rounded px-3 py-2">{error}</div>
@@ -143,7 +167,12 @@ export default function GestionOficina() {
         {tab === "documentos" && <Documentos data={data} persist={persist} staffById={staffById} />}
         {tab === "locadores" && <Locadores data={data} persist={persist} />}
         {tab === "consolidado" && <Consolidado data={data} persist={persist} />}
-        {tab === "respaldo" && <RespaldoTab data={data} persist={persist} staffById={staffById} />}
+        {tab === "respaldo" && (
+          <>
+            <RespaldoTab data={data} persist={persist} staffById={staffById} />
+            <CuentaAcceso onSalir={salir} />
+          </>
+        )}
       </div>
     </div>
     </CorreccionProvider>
@@ -338,10 +367,16 @@ function Tareas({ data, persist, staffById }) {
 
   function save() {
     if (!form.title.trim()) return;
-    const exists = data.tasks.some((t) => t.id === form.id);
-    const next = exists
-      ? data.tasks.map((t) => (t.id === form.id ? form : t))
-      : [...data.tasks, { ...form, id: uid(), createdAt: todayStr() }];
+    const actual = data.tasks.find((t) => t.id === form.id);
+    const { motivoReprogramacion, ...campos } = form;
+    let next;
+    if (actual) {
+      // Si cambio la fecha limite, la anterior queda anotada en el historial en vez de perderse.
+      const editada = reprogramarTarea({ ...campos, dueDate: actual.dueDate }, campos.dueDate, (motivoReprogramacion || "").trim());
+      next = data.tasks.map((t) => (t.id === form.id ? editada : t));
+    } else {
+      next = [...data.tasks, { ...campos, id: uid(), createdAt: todayStr() }];
+    }
     persist({ ...data, tasks: next });
     setForm(null);
   }
@@ -369,19 +404,12 @@ function Tareas({ data, persist, staffById }) {
       texto: datos.texto,
       avance: datos.avance,
     };
-    const next = {
+    let next = {
       ...t,
       avance: datos.avance,
       seguimiento: [...(t.seguimiento || []), entrada],
     };
-    if (datos.nuevaFecha) {
-      next.fechaOriginal = t.fechaOriginal || t.dueDate;
-      next.reprogramaciones = [
-        ...(t.reprogramaciones || []),
-        { de: t.dueDate, a: datos.nuevaFecha, fecha: todayStr(), motivo: datos.texto },
-      ];
-      next.dueDate = datos.nuevaFecha;
-    }
+    if (datos.nuevaFecha) next = reprogramarTarea(next, datos.nuevaFecha, datos.texto);
     if (datos.avance >= 100) {
       next.status = "completado";
       next.completedAt = t.completedAt || todayStr();
@@ -392,9 +420,20 @@ function Tareas({ data, persist, staffById }) {
     setAvanceForm(null);
   }
 
+  // Deja constancia de que se controlo la tarea y sigue en el mismo punto. Una sola por dia.
+  function registrarSinAvance(t) {
+    if (sinAvanceHoy(t)) return;
+    const entrada = { id: uid(), fecha: todayStr(), texto: "", avance: Number(t.avance) || 0, sinAvance: true };
+    const next = { ...t, seguimiento: [...(t.seguimiento || []), entrada] };
+    persist({ ...data, tasks: data.tasks.map((x) => (x.id === t.id ? next : x)) });
+  }
+
   const filtered = data.tasks
     .filter((t) => filter === "todas" || t.status === filter)
     .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+
+  // Tarea guardada que se esta editando (null si es nueva), para detectar cambios de fecha.
+  const tareaEditada = form?.id ? data.tasks.find((t) => t.id === form.id) || null : null;
 
   return (
     <div>
@@ -482,12 +521,22 @@ function Tareas({ data, persist, staffById }) {
                       {STATUSES.map((s2) => <option key={s2.id} value={s2.id}>{s2.label}</option>)}
                     </select>
                     {t.status !== "completado" && (
-                      <button
-                        onClick={() => setAvanceForm(t)}
-                        className="flex items-center gap-1 text-xs border border-slate-300 text-slate-600 rounded px-2 py-1 hover:border-pnp-verde hover:text-pnp-verde whitespace-nowrap"
-                      >
-                        <Activity size={12} /> Avance
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setAvanceForm(t)}
+                          className="flex items-center gap-1 text-xs border border-slate-300 text-slate-600 rounded px-2 py-1 hover:border-pnp-verde hover:text-pnp-verde whitespace-nowrap"
+                        >
+                          <Activity size={12} /> Avance
+                        </button>
+                        <button
+                          onClick={() => registrarSinAvance(t)}
+                          disabled={sinAvanceHoy(t)}
+                          title={sinAvanceHoy(t) ? "Ya quedo registrado hoy" : "Dejar constancia de que sigue en el mismo punto"}
+                          className="flex items-center gap-1 text-xs border border-slate-300 text-slate-600 rounded px-2 py-1 hover:border-rose-400 hover:text-rose-700 whitespace-nowrap disabled:opacity-40 disabled:hover:border-slate-300 disabled:hover:text-slate-600"
+                        >
+                          <PauseCircle size={12} /> {sinAvanceHoy(t) ? "Sin avance hoy" : "Sin avance"}
+                        </button>
+                      </div>
                     )}
                     <div className="flex gap-2">
                       <button onClick={() => openEdit(t)} className="text-slate-400 hover:text-slate-700"><Pencil size={14} /></button>
@@ -536,6 +585,23 @@ function Tareas({ data, persist, staffById }) {
                 </select>
               </Field>
             </div>
+            {tareaEditada && tareaEditada.dueDate !== form.dueDate && (
+              <div className="text-xs bg-amber-50 border border-amber-200 rounded p-2.5 text-amber-900 space-y-1.5">
+                <p className="flex items-center gap-1.5">
+                  <CalendarClock size={13} className="shrink-0" />
+                  <span>
+                    Se registrara como reprogramacion: del <b>{fmtDate(tareaEditada.dueDate)}</b> al <b>{fmtDate(form.dueDate)}</b>
+                    {daysDiff(tareaEditada.dueDate) < 0 && ` · iba ${Math.abs(daysDiff(tareaEditada.dueDate))} dia(s) vencida`}.
+                    La fecha anterior queda guardada en el historial.
+                  </span>
+                </p>
+                <CampoTexto
+                  value={form.motivoReprogramacion || ""}
+                  onChange={(v) => setForm({ ...form, motivoReprogramacion: v })}
+                  placeholder="Motivo (opcional). Ej: la unidad aun no envia la informacion"
+                />
+              </div>
+            )}
             <Field label="Notas">
               <CampoTexto value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} multiline rows={2} />
             </Field>

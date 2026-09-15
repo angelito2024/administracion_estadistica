@@ -39,3 +39,7 @@ dist-ssr/
 *.njsproj
 *.sln
 *.sw?
+
+# Datos personales (DNI, RUC, celulares): solo en esta PC, nunca en git
+src/lib/locadores.datos.js
+*.xlsx

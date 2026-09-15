@@ -1,5 +1,9 @@
 // Repositorio de respaldo: exportar / importar / copias automaticas.
 import { todayStr, fmtFechaHora, monthLabel } from "./fechas";
+import {
+  expedienteContrato, expedientePago, revisarLocador,
+  RECORRIDO_CONTRATO, RECORRIDO_PAGO,
+} from "./locadores";
 
 export const SNAPSHOT_KEY = "gestion-oficina-copias";
 export const MAX_SNAPSHOTS = 10;
@@ -153,13 +157,6 @@ export function exportarReportesCSV(data, meses) {
   );
 }
 
-const ETAPAS_LOCADOR = [
-  ["informe", "Informe"],
-  ["conformidad", "Conformidad"],
-  ["recibo", "Recibo honorarios"],
-  ["pago", "Pago"],
-];
-
 export function exportarDocumentosCSV(data, staffById) {
   const filas = (data.documentos || []).map((d) => [
     d.tipo, d.nro, d.asunto, d.remitente,
@@ -180,22 +177,34 @@ export function exportarDocumentosCSV(data, staffById) {
   );
 }
 
+/** Una fila por locador con el punto exacto en que estan sus dos expedientes. */
 export function exportarLocadoresCSV(data, mes) {
   const filas = (data.locadores || []).map((l) => {
-    const t = (l.tramites || {})[mes] || {};
+    const c = expedienteContrato(l);
+    const p = expedientePago(l, mes);
+    const estadoDe = (exp, pasos) =>
+      exp.finalizado ? `Finalizado ${exp.finalizado}` : !exp.iniciado ? "Sin iniciar" : pasos[exp.paso];
     return [
-      l.nombre, l.dni || "", l.ruc || "", l.servicio || "", l.nroContrato || "",
-      l.montoMensual || "", l.fechaInicio || "", l.fechaFin || "",
+      l.nroOrden || "", l.nombre, l.dni || "", l.ruc || "", l.cargo || "",
+      l.sgd || "", l.ordenServicio || "", l.siaf || "",
+      l.montoMensual || "", l.remuneracion || "",
+      l.fechaInicio || "", l.fechaFin || "",
+      l.celular || "", l.correo || "",
       l.estado === "finalizado" ? "Finalizado" : "Activo",
-      ...ETAPAS_LOCADOR.map(([id]) => (t[id]?.hecho ? t[id].fecha || "Si" : "Pendiente")),
-      t.observacion || "",
+      estadoDe(c, RECORRIDO_CONTRATO),
+      c.observado ? `OBSERVADO: ${c.observado.motivo}` : "",
+      estadoDe(p, RECORRIDO_PAGO),
+      p.observado ? `OBSERVADO: ${p.observado.motivo}` : "",
+      revisarLocador(l, data.locadores || []).map((a) => a.texto).join(" / "),
     ];
   });
   descargar(
     `locadores-${mes}-${todayStr()}.csv`,
     aCSV(
-      ["Locador", "DNI", "RUC", "Servicio", "N° contrato", "Monto mensual", "Inicio", "Fin", "Situacion",
-       ...ETAPAS_LOCADOR.map(([, l]) => l), "Observacion del mes"],
+      ["N°", "Locador", "DNI", "RUC", "Cargo", "SGD", "Orden de servicio", "SIAF",
+       "Monto mensual", "Remuneracion", "Inicio", "Fin", "Celular", "Correo", "Situacion",
+       "Expediente de contrato", "Observacion del contrato",
+       `Expediente de pago ${mes}`, "Observacion del pago", "Datos por revisar"],
       filas
     ),
     "text/csv;charset=utf-8"

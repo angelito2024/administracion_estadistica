@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Download, Target, AlertTriangle, Clock, CalendarClock } from "lucide-react";
+import { TrendingUp, TrendingDown, Download, Target, AlertTriangle, Clock, CalendarClock, PauseCircle } from "lucide-react";
 import { daysDiff, diffDays, lastNMonths, monthLabel, monthKey } from "../lib/fechas";
+import { controlesSinAvance } from "./Seguimiento";
 import { exportarDesempenoCSV } from "../lib/respaldo";
 
 const PERIODOS = [
@@ -55,6 +56,8 @@ export default function Desempeno({ data, goTo }) {
 
       // Cuantas tuvo que mover de fecha y en que porcentaje va lo que sigue abierto.
       const reprogramadas = carga.filter((t) => (t.reprogramaciones || []).length > 0).length;
+      // Veces que se controlo una tarea suya y seguia en el mismo punto.
+      const sinAvance = carga.reduce((s, t) => s + controlesSinAvance(t).total, 0);
       const avancePendientes = sinTerminar.length
         ? Math.round(sinTerminar.reduce((s, t) => s + (Number(t.avance) || 0), 0) / sinTerminar.length)
         : null;
@@ -94,6 +97,7 @@ export default function Desempeno({ data, goTo }) {
         pendientes,
         atrasadas,
         reprogramadas,
+        sinAvance,
         avancePendientes,
         cumplimiento,
         puntualidad: pct(aTiempo, completadas.length),
@@ -253,6 +257,11 @@ function FichaPersona({ f, mesesEvolucion }) {
           {f.atrasadas > 0 && (
             <span className="flex items-center gap-1 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
               <AlertTriangle size={11} /> {f.atrasadas} atrasada(s)
+            </span>
+          )}
+          {f.sinAvance > 0 && (
+            <span className="flex items-center gap-1 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5">
+              <PauseCircle size={11} /> {f.sinAvance} control(es) sin avance
             </span>
           )}
           {f.avancePendientes !== null && f.pendientes > 0 && (
