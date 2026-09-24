@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Download, Upload, ShieldCheck, AlertTriangle, RotateCcw, Database, SpellCheck2, FolderSync, FolderCheck, X } from "lucide-react";
 import {
-  soportaCarpeta, elegirCarpeta, quitarCarpeta, respaldarEnCarpeta, leerEstado, COPIAS_A_CONSERVAR,
+  soportaCarpeta, elegirCarpeta, quitarCarpeta, respaldarEnCarpeta, leerEstado, estadoReal, COPIAS_A_CONSERVAR,
 } from "../lib/respaldoAuto";
 import { todayStr, fmtDate, diffDays, lastNMonths, monthKey } from "../lib/fechas";
 import {
@@ -265,6 +265,11 @@ function RespaldoAutomatico({ data, onMensaje }) {
   const [estado, setEstado] = useState(() => leerEstado());
   const [ocupado, setOcupado] = useState(false);
   const disponible = soportaCarpeta();
+
+  // Reconcilia con la carpeta guardada en IndexedDB, por si el estado visible se perdio.
+  useEffect(() => {
+    if (disponible) estadoReal().then(setEstado).catch(() => {});
+  }, [disponible]);
 
   async function configurar() {
     setOcupado(true);

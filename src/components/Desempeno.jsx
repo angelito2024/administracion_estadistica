@@ -29,6 +29,14 @@ function pct(parte, total) {
   return total ? Math.round((parte / total) * 100) : null;
 }
 
+/**
+ * Fecha con la que se juzga si una tarea llego a tiempo: la primera que se fijo.
+ * `fechaOriginal` solo existe cuando la tarea se reprogramo alguna vez.
+ */
+function fechaComprometida(t) {
+  return t.fechaOriginal || t.dueDate;
+}
+
 export default function Desempeno({ data, goTo }) {
   const [periodo, setPeriodo] = useState("mes");
   const cfg = PERIODOS.find((p) => p.id === periodo);
@@ -48,11 +56,22 @@ export default function Desempeno({ data, goTo }) {
       const carga = suyas.filter((t) => enPeriodo(t.dueDate));
 
       const completadas = carga.filter((t) => t.status === "completado");
-      const aTiempo = completadas.filter((t) => t.completedAt && t.dueDate && t.completedAt <= t.dueDate).length;
+      // La puntualidad se mide contra la fecha COMPROMETIDA (la primera), no contra
+      // la ultima reprogramacion: si no, mover la fecha borraria el incumplimiento.
+      const aTiempo = completadas.filter((t) => t.completedAt && fechaComprometida(t) && t.completedAt <= fechaComprometida(t)).length;
       const tarde = completadas.length - aTiempo;
+      // Entregadas tarde que se habrian dado por buenas mirando solo la fecha vigente.
+      const tardeTrasReprogramar = completadas.filter(
+        (t) => t.completedAt && t.dueDate && t.completedAt <= t.dueDate && fechaComprometida(t) < t.completedAt
+      ).length;
+      const diasDeRetraso = completadas.reduce((s, t) => {
+        const d = diffDays(fechaComprometida(t), t.completedAt);
+        return s + (isNaN(d) || d <= 0 ? 0 : d);
+      }, 0);
       const sinTerminar = carga.filter((t) => t.status !== "completado");
       const pendientes = sinTerminar.length;
-      const atrasadas = suyas.filter((t) => t.status !== "completado" && daysDiff(t.dueDate) < 0).length;
+      // Respeta el periodo elegido, igual que el resto de las cifras de la tarjeta.
+      const atrasadas = carga.filter((t) => t.status !== "completado" && daysDiff(t.dueDate) < 0).length;
 
       // Cuantas tuvo que mover de fecha y en que porcentaje va lo que sigue abierto.
       const reprogramadas = carga.filter((t) => (t.reprogramaciones || []).length > 0).length;
@@ -94,6 +113,8 @@ export default function Desempeno({ data, goTo }) {
         completadas: completadas.length,
         aTiempo,
         tarde,
+        tardeTrasReprogramar,
+        diasDeRetraso,
         pendientes,
         atrasadas,
         reprogramadas,
@@ -281,6 +302,17 @@ function FichaPersona({ f, mesesEvolucion }) {
         <Dato label="A tiempo" valor={f.puntualidad === null ? "—" : f.puntualidad + "%"} />
         <Dato label="Dias promedio" valor={f.promedioDias === null ? "—" : f.promedioDias} />
       </div>
+
+      {f.tardeTrasReprogramar > 0 && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-2 flex items-start gap-1.5">
+          <CalendarClock size={12} className="mt-0.5 shrink-0" />
+          <span>
+            {f.tardeTrasReprogramar} tarea(s) se entregaron dentro de una fecha reprogramada, pero fuera de la
+            fecha que se comprometio al inicio. Aqui cuentan como fuera de plazo.
+            {f.diasDeRetraso > 0 && ` Retraso acumulado: ${f.diasDeRetraso} dia(s).`}
+          </span>
+        </p>
+      )}
 
       {f.meta > 0 ? (
         <div className="mt-3">

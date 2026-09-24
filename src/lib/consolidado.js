@@ -40,21 +40,40 @@ export function leerNumero(texto) {
   } else if (tieneComa) {
     const decimales = s.length - s.lastIndexOf(",") - 1;
     s = s.split(",").length === 2 && decimales <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  } else if (tienePunto) {
+    // Un punto seguido de EXACTAMENTE tres digitos es separador de miles:
+    // en los cuadros "1.300" son mil trescientas atenciones, no 1,3.
+    // Con una o dos cifras detras ("1.5", "0.75") si es decimal.
+    const grupos = s.split(".");
+    const esMiles =
+      grupos.length > 2 || (grupos.length === 2 && grupos[1].length === 3 && /^\d+$/.test(grupos[1]));
+    if (esMiles && grupos.every((g, i) => (i === 0 ? /^-?\d+$/ : /^\d{3}$/).test(g))) {
+      s = grupos.join("");
+    }
   }
 
   const n = parseFloat(s);
   return isNaN(n) ? null : n;
 }
 
-/** Detecta el separador (tabulacion al pegar de Excel, ; o , en archivos CSV). */
-function detectarSeparador(linea) {
+/**
+ * Detecta el separador (tabulacion al pegar de Excel, ; o , en archivos CSV).
+ * Mira TODAS las lineas, no solo la primera: los cuadros suelen empezar por un
+ * titulo sin separadores ("PRODUCCION DE IPRESS PNP DE NIVEL I") y mirando solo
+ * esa linea la tabla entera se leia como una sola columna.
+ * Gana el separador que mas veces aparece de forma consistente.
+ */
+function detectarSeparador(lineas) {
   const candidatos = ["\t", ";", ","];
-  let mejor = "\t";
+  let mejor = null;
   let max = 0;
   candidatos.forEach((c) => {
-    const n = linea.split(c).length - 1;
-    if (n > max) {
-      max = n;
+    // Total de apariciones, pero solo en las lineas que lo tienen: asi una tabla
+    // de 20 filas con tabulador gana a un par de comas sueltas en el titulo.
+    const conSeparador = lineas.filter((l) => l.includes(c));
+    const total = conSeparador.reduce((s, l) => s + l.split(c).length - 1, 0);
+    if (total > max) {
+      max = total;
       mejor = c;
     }
   });
@@ -68,7 +87,7 @@ export function parsearTabla(texto) {
     .split("\n")
     .filter((l) => l.trim());
   if (!lineas.length) return [];
-  const sep = detectarSeparador(lineas[0]);
+  const sep = detectarSeparador(lineas);
   if (!sep) return lineas.map((l) => [l.trim()]);
   return lineas.map((l) => l.split(sep).map((c) => c.trim().replace(/^"|"$/g, "")));
 }
@@ -223,7 +242,8 @@ export function interpretarTabla(texto, opciones = {}) {
 
   /* --- disposicion 2 y 3: el indicador baja por la primera columna --- */
   const cabecera = matriz[0];
-  const mesesCol = cabecera.map((c, i) => (i === 0 ? null : leerMes(c)));
+  // leerMesLibre, no leerMes: en los cuadros la cabecera dice "ENERO", no "2026-01".
+  const mesesCol = cabecera.map((c, i) => (i === 0 ? null : leerMesLibre(c, anio)));
   const hayMeses = mesesCol.some(Boolean);
   const desde = hayMeses || leerNumero(cabecera[1]) === null ? 1 : 0;
 

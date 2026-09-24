@@ -171,9 +171,30 @@ export async function respaldarEnCarpeta(data, { pedirPermiso = false } = {}) {
   }
 }
 
+/**
+ * Estado real, comprobando la carpeta guardada en IndexedDB.
+ * El estado visible vive en localStorage y la carpeta en IndexedDB: si se limpian
+ * los datos del sitio, la carpeta sobrevive pero el estado no, y el respaldo se
+ * daba por desactivado justo cuando mas falta hace. Aqui se reconstruye.
+ */
+export async function estadoReal() {
+  const estado = leerEstado();
+  const handle = await leerHandle();
+  if (!handle) {
+    if (estado) escribirEstado(null); // habia estado pero ya no hay carpeta
+    return null;
+  }
+  if (!estado?.carpeta) {
+    const recuperado = { carpeta: handle.name, ultimo: null, ultimoArchivo: null };
+    escribirEstado(recuperado);
+    return recuperado;
+  }
+  return estado;
+}
+
 /** Respaldo silencioso al abrir la app: como mucho uno por dia. */
 export async function respaldarSiTocaHoy(data) {
-  const estado = leerEstado();
+  const estado = await estadoReal();
   if (!estado?.carpeta || estado.ultimo === todayStr()) return { ok: false, motivo: "no-toca" };
   return respaldarEnCarpeta(data, { pedirPermiso: false });
 }

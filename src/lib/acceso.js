@@ -77,6 +77,65 @@ export async function cambiarClave(claveActual, claveNueva) {
   await crearAcceso(a.usuario, claveNueva);
 }
 
+/* ---------- control de intentos fallidos ----------
+   Vive en localStorage, no en la pantalla: en memoria bastaba recargar con F5
+   para reiniciar el contador y seguir probando claves sin limite real. */
+const INTENTOS_KEY = "gestion-oficina-intentos";
+export const MAX_INTENTOS = 5;
+const ESPERAS_SEG = [30, 60, 300, 900]; // sube con cada bloqueo: 30s, 1min, 5min, 15min
+
+function leerIntentos() {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(INTENTOS_KEY) || "null");
+    return v && typeof v === "object" ? { fallos: v.fallos || 0, hasta: v.hasta || 0, bloqueos: v.bloqueos || 0 } : { fallos: 0, hasta: 0, bloqueos: 0 };
+  } catch (e) {
+    return { fallos: 0, hasta: 0, bloqueos: 0 };
+  }
+}
+
+function escribirIntentos(v) {
+  try {
+    window.localStorage.setItem(INTENTOS_KEY, JSON.stringify(v));
+  } catch (e) {
+    // sin espacio: el control se degrada, pero no impide ingresar
+  }
+}
+
+/** Segundos que faltan para poder reintentar. 0 si no esta bloqueado. */
+export function segundosBloqueado() {
+  const { hasta } = leerIntentos();
+  return Math.max(0, Math.ceil((hasta - Date.now()) / 1000));
+}
+
+export function intentosFallidos() {
+  return leerIntentos().fallos;
+}
+
+/** Anota un intento fallido y bloquea al llegar al maximo. Devuelve el estado. */
+export function registrarFallo() {
+  const v = leerIntentos();
+  v.fallos += 1;
+  if (v.fallos >= MAX_INTENTOS) {
+    const espera = ESPERAS_SEG[Math.min(v.bloqueos, ESPERAS_SEG.length - 1)];
+    v.hasta = Date.now() + espera * 1000;
+    v.bloqueos += 1;
+    v.fallos = 0;
+    escribirIntentos(v);
+    return { bloqueado: true, segundos: espera, fallos: 0 };
+  }
+  escribirIntentos(v);
+  return { bloqueado: false, segundos: 0, fallos: v.fallos };
+}
+
+/** Ingreso correcto: se borra todo el historial de intentos. */
+export function limpiarIntentos() {
+  try {
+    window.localStorage.removeItem(INTENTOS_KEY);
+  } catch (e) {
+    // nada que hacer
+  }
+}
+
 /* ---------- sesion (se cierra al cerrar el navegador) ---------- */
 export function sesionActiva() {
   try {

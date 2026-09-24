@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Eye, EyeOff, KeyRound, LogIn, LogOut, UserRound } from "lucide-react";
 import { Emblema } from "./Portada";
 import {
@@ -8,11 +8,12 @@ import {
   verificarAcceso,
   cambiarClave,
   abrirSesion,
+  segundosBloqueado,
+  registrarFallo,
+  limpiarIntentos,
+  MAX_INTENTOS,
   CLAVE_MINIMA,
 } from "../lib/acceso";
-
-const MAX_INTENTOS = 5;
-const BLOQUEO_SEG = 30;
 
 /** Campo de clave con boton para verla. */
 function CampoClave({ value, onChange, placeholder, autoFocus }) {
@@ -49,37 +50,47 @@ export default function PantallaAcceso({ onEntrar }) {
   const [confirmar, setConfirmar] = useState("");
   const [error, setError] = useState("");
   const [ocupado, setOcupado] = useState(false);
-  const [intentos, setIntentos] = useState(0);
-  const [bloqueadoHasta, setBloqueadoHasta] = useState(0);
+  // El contador vive en localStorage: recargar la pagina ya no lo reinicia.
+  const [segundosBloqueo, setSegundosBloqueo] = useState(() => segundosBloqueado());
 
-  const segundosBloqueo = Math.max(0, Math.ceil((bloqueadoHasta - Date.now()) / 1000));
+  // Mientras dure el bloqueo, la cuenta atras se refresca cada segundo.
+  useEffect(() => {
+    if (segundosBloqueo <= 0) return;
+    const id = setInterval(() => setSegundosBloqueo(segundosBloqueado()), 1000);
+    return () => clearInterval(id);
+  }, [segundosBloqueo]);
 
   async function enviar(e) {
     e.preventDefault();
     setError("");
-    if (segundosBloqueo > 0) return;
+    if (segundosBloqueado() > 0) {
+      setSegundosBloqueo(segundosBloqueado());
+      return;
+    }
     setOcupado(true);
     try {
       if (primeraVez) {
         if (clave !== confirmar) throw new Error("Las claves no coinciden.");
         await crearAcceso(usuario, clave);
+        limpiarIntentos();
         abrirSesion();
         onEntrar();
         return;
       }
       const ok = await verificarAcceso(usuario, clave);
       if (!ok) {
-        const n = intentos + 1;
-        setIntentos(n);
         setClave("");
-        if (n >= MAX_INTENTOS) {
-          setBloqueadoHasta(Date.now() + BLOQUEO_SEG * 1000);
-          setIntentos(0);
-          setTimeout(() => setBloqueadoHasta(0), BLOQUEO_SEG * 1000);
-          throw new Error(`Demasiados intentos. Espera ${BLOQUEO_SEG} segundos.`);
+        const r = registrarFallo();
+        if (r.bloqueado) {
+          setSegundosBloqueo(r.segundos);
+          const minutos = Math.round(r.segundos / 60);
+          throw new Error(
+            `Demasiados intentos fallidos. Espera ${r.segundos < 60 ? `${r.segundos} segundos` : `${minutos} minuto(s)`}.`
+          );
         }
-        throw new Error(`Usuario o clave incorrectos (intento ${n} de ${MAX_INTENTOS}).`);
+        throw new Error(`Usuario o clave incorrectos (intento ${r.fallos} de ${MAX_INTENTOS}).`);
       }
+      limpiarIntentos();
       abrirSesion();
       onEntrar();
     } catch (err) {
