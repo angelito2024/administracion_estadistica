@@ -31,7 +31,7 @@ export function uid() {
 /**
  * Limpia los textos de un registro antes de guardarlo: quita espacios al inicio
  * y al final y colapsa los repetidos. Sin esto quedan nombres como
- * "YANGUA JIMENEZ LUIS GUSTAVO ", que descuadran busquedas y ordenaciones.
+ * "APELLIDO NOMBRE " con un espacio final, que descuadran busquedas y ordenaciones.
  * No toca numeros, booleanos, fechas ni objetos anidados (tramites, historiales).
  */
 export function limpiarRegistro(obj) {
