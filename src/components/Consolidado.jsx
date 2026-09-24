@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Pencil, Upload, Download, X, TrendingUp, TrendingDown,
   Table2, BarChart3, ClipboardPaste, AlertTriangle,
 } from "lucide-react";
-import { monthKey, monthLabel, uid } from "../lib/fechas";
+import { monthKey, monthLabel, uid, limpiarRegistro } from "../lib/fechas";
 import { interpretarTabla, combinarIndicadores, variacion, fmtNumero, detectarAnio } from "../lib/consolidado";
 import { exportarConsolidadoCSV } from "../lib/respaldo";
 import CampoTexto from "./CampoTexto";
@@ -32,8 +32,8 @@ export default function Consolidado({ data, persist }) {
     if (!form.nombre.trim()) return;
     const existe = indicadores.some((i) => i.id === form.id);
     const next = existe
-      ? indicadores.map((i) => (i.id === form.id ? form : i))
-      : [...indicadores, { ...form, id: uid(), valores: {} }];
+      ? indicadores.map((i) => (i.id === form.id ? limpiarRegistro(form) : i))
+      : [...indicadores, { ...limpiarRegistro(form), id: uid(), valores: {} }];
     persist({ ...data, indicadores: next });
     setForm(null);
   }

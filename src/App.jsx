@@ -6,17 +6,21 @@ import RespaldoTab from "./components/Respaldo";
 import Documentos, { documentosVencidos, documentosPorResponder } from "./components/Documentos";
 import Locadores, { locadoresPendientes, contratosPorVencer } from "./components/Locadores";
 import { locadoresIniciales } from "./lib/locadores";
+
 import Consolidado from "./components/Consolidado";
 import { BarraAvance, ResumenSeguimiento, ModalAvance, reprogramarTarea, sinAvanceHoy } from "./components/Seguimiento";
 import CampoTexto, { CorreccionProvider } from "./components/CampoTexto";
-import { todayStr, monthKey, diffDays, daysDiff, uid, fmtDate, monthLabel, last6Months } from "./lib/fechas";
-import { guardarCopiaDiaria } from "./lib/respaldo";
+import { todayStr, monthKey, diffDays, daysDiff, uid, fmtDate, monthLabel, last6Months, limpiarRegistro, sumarDias } from "./lib/fechas";
+import { revisarPersona } from "./lib/locadores";
+import { guardarCopiaDiaria, limpiarCopias, esCuotaLlena } from "./lib/respaldo";
+import { respaldarSiTocaHoy } from "./lib/respaldoAuto";
 import PantallaAcceso, { CuentaAcceso } from "./components/Acceso";
 import { sesionActiva, cerrarSesion } from "./lib/acceso";
 
 const STORAGE_KEY = "gestion-oficina-data";
 
-// Almacenamiento en el navegador de esta PC.
+// Almacenamiento en el navegador de esta PC. setItem lanza si no hay espacio o si
+// el navegador tiene bloqueado el almacenamiento del sitio; quien llame debe capturarlo.
 const storage = {
   async get(key) {
     const raw = window.localStorage.getItem(key);
@@ -48,6 +52,9 @@ const STATUSES = [
   { id: "en_curso", label: "En curso" },
   { id: "completado", label: "Completado" },
 ];
+
+// Dias que una tarea completada sigue a la vista antes de pasar al historial.
+const DIAS_VIGENCIA = 60;
 
 export default function GestionOficina() {
   const [data, setData] = useState(emptyData);
@@ -83,6 +90,9 @@ export default function GestionOficina() {
           await storage.set(STORAGE_KEY, JSON.stringify(inicial), false);
         }
         setData(inicial);
+        // Respaldo del dia a la carpeta configurada, si la hay. En silencio: si el
+        // navegador pide confirmar el permiso, se hace desde la pestana Respaldo.
+        respaldarSiTocaHoy(inicial).catch(() => {});
       } catch (e) {
         // no data yet
       } finally {
@@ -91,16 +101,37 @@ export default function GestionOficina() {
     })();
   }, []);
 
+  /**
+   * Guarda primero en disco y solo entonces actualiza la pantalla: si el guardado
+   * falla, el cambio no se da por bueno y el usuario ve el aviso en vez de creer
+   * que quedo registrado. La copia del dia va al final, porque es secundaria y no
+   * debe consumir el espacio que necesita el dato real.
+   */
   async function persist(next) {
-    setData(next);
-    guardarCopiaDiaria(next);
+    const serializado = JSON.stringify(next);
     try {
-      const ok = await storage.set(STORAGE_KEY, JSON.stringify(next), false);
-      if (!ok) setError("No se pudo guardar. Intenta de nuevo.");
-      else setError("");
+      await storage.set(STORAGE_KEY, serializado);
     } catch (e) {
-      setError("No se pudo guardar. Intenta de nuevo.");
+      // Sin espacio: se liberan las copias automaticas y se reintenta una vez.
+      if (esCuotaLlena(e)) {
+        try {
+          limpiarCopias();
+          await storage.set(STORAGE_KEY, serializado);
+        } catch (e2) {
+          setError(
+            "No hay espacio para guardar en este navegador. Ve a Respaldo, descarga el archivo " +
+              "y libera espacio antes de seguir; lo ultimo que hiciste NO se ha guardado."
+          );
+          return;
+        }
+      } else {
+        setError("No se pudo guardar. Revisa que el navegador permita almacenar datos en este sitio.");
+        return;
+      }
     }
+    setData(next);
+    setError("");
+    guardarCopiaDiaria(next); // secundaria: si falla, no compromete el dato ya guardado
   }
 
   const staffById = useMemo(() => {
@@ -238,8 +269,8 @@ function Panel({ data, staffById, overdueTasks, dueSoonTasks, pendingTasks, goTo
           {locPendientes.length > 0 && (
             <Aviso
               tono="amber"
-              titulo={`${locPendientes.length} locador(es) con tramite incompleto`}
-              detalle="Informe, conformidad, recibo o pago del mes"
+              titulo={`${locPendientes.length} locador(es) con el pago del mes en tramite`}
+              detalle="El expediente aun no llega a Tesoreria"
               onClick={() => goTo("locadores")}
             />
           )}
@@ -372,10 +403,10 @@ function Tareas({ data, persist, staffById }) {
     let next;
     if (actual) {
       // Si cambio la fecha limite, la anterior queda anotada en el historial en vez de perderse.
-      const editada = reprogramarTarea({ ...campos, dueDate: actual.dueDate }, campos.dueDate, (motivoReprogramacion || "").trim());
+      const editada = reprogramarTarea({ ...limpiarRegistro(campos), dueDate: actual.dueDate }, campos.dueDate, (motivoReprogramacion || "").trim());
       next = data.tasks.map((t) => (t.id === form.id ? editada : t));
     } else {
-      next = [...data.tasks, { ...campos, id: uid(), createdAt: todayStr() }];
+      next = [...data.tasks, { ...limpiarRegistro(campos), id: uid(), createdAt: todayStr() }];
     }
     persist({ ...data, tasks: next });
     setForm(null);
@@ -428,8 +459,19 @@ function Tareas({ data, persist, staffById }) {
     persist({ ...data, tasks: data.tasks.map((x) => (x.id === t.id ? next : x)) });
   }
 
+  // Las tareas completadas hace mas de DIAS_VIGENCIA salen de la vista del dia a dia:
+  // siguen guardadas y se consultan con el filtro "Historial", pero no estorban.
+  const limiteHistorial = sumarDias(todayStr(), -DIAS_VIGENCIA);
+  // Sin fecha de cierre no se puede saber si es antigua: se queda a la vista.
+  const esHistorico = (t) => t.status === "completado" && !!t.completedAt && t.completedAt < limiteHistorial;
+  const historicas = data.tasks.filter(esHistorico);
+
   const filtered = data.tasks
-    .filter((t) => filter === "todas" || t.status === filter)
+    .filter((t) => {
+      if (filter === "historial") return esHistorico(t);
+      if (esHistorico(t)) return false;
+      return filter === "todas" || t.status === filter;
+    })
     .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
 
   // Tarea guardada que se esta editando (null si es nueva), para detectar cambios de fecha.
@@ -439,15 +481,20 @@ function Tareas({ data, persist, staffById }) {
     <div>
       <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
         <div className="flex gap-1">
-          {["todas", ...STATUSES.map((s) => s.id)].map((f) => (
+          {["todas", ...STATUSES.map((s) => s.id), ...(historicas.length ? ["historial"] : [])].map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
+              title={f === "historial" ? `Completadas hace mas de ${DIAS_VIGENCIA} dias` : undefined}
               className={`text-xs px-2.5 py-1 rounded-full border ${
                 filter === f ? "bg-pnp-verde text-white border-slate-800" : "border-slate-300 text-slate-600"
               }`}
             >
-              {f === "todas" ? "Todas" : STATUSES.find((s) => s.id === f).label}
+              {f === "todas"
+                ? "Todas"
+                : f === "historial"
+                ? `Historial (${historicas.length})`
+                : STATUSES.find((s) => s.id === f).label}
             </button>
           ))}
         </div>
@@ -780,8 +827,8 @@ function Reportes({ data, persist }) {
     if (!form.name.trim()) return;
     const exists = data.reports.some((r) => r.id === form.id);
     const next = exists
-      ? data.reports.map((r) => (r.id === form.id ? form : r))
-      : [...data.reports, { ...form, id: uid(), months: {} }];
+      ? data.reports.map((r) => (r.id === form.id ? limpiarRegistro(form) : r))
+      : [...data.reports, { ...limpiarRegistro(form), id: uid(), months: {} }];
     persist({ ...data, reports: next });
     setForm(null);
   }
@@ -799,8 +846,8 @@ function Reportes({ data, persist }) {
     if (!adhocForm.title.trim()) return;
     const exists = data.adhoc.some((a) => a.id === adhocForm.id);
     const next = exists
-      ? data.adhoc.map((a) => (a.id === adhocForm.id ? adhocForm : a))
-      : [...data.adhoc, { ...adhocForm, id: uid() }];
+      ? data.adhoc.map((a) => (a.id === adhocForm.id ? limpiarRegistro(adhocForm) : a))
+      : [...data.adhoc, { ...limpiarRegistro(adhocForm), id: uid() }];
     persist({ ...data, adhoc: next });
     setAdhocForm(null);
   }
@@ -969,8 +1016,8 @@ function Archivo({ data, persist }) {
     if (!form.title.trim()) return;
     const exists = data.archive.some((a) => a.id === form.id);
     const next = exists
-      ? data.archive.map((a) => (a.id === form.id ? form : a))
-      : [...data.archive, { ...form, id: uid() }];
+      ? data.archive.map((a) => (a.id === form.id ? limpiarRegistro(form) : a))
+      : [...data.archive, { ...limpiarRegistro(form), id: uid() }];
     persist({ ...data, archive: next });
     setForm(null);
   }
@@ -1073,13 +1120,15 @@ function Archivo({ data, persist }) {
 /* ---------- PERSONAL ---------- */
 function Personal({ data, persist }) {
   const [form, setForm] = useState(null);
+  const avisosPersona = form ? revisarPersona(form, data.staff) : [];
 
   function save() {
     if (!form.name.trim()) return;
+    const limpio = limpiarRegistro(form);
     const exists = data.staff.some((s) => s.id === form.id);
     const next = exists
-      ? data.staff.map((s) => (s.id === form.id ? form : s))
-      : [...data.staff, { ...form, id: uid() }];
+      ? data.staff.map((s) => (s.id === form.id ? limpio : s))
+      : [...data.staff, { ...limpio, id: uid() }];
     persist({ ...data, staff: next });
     setForm(null);
   }
@@ -1166,6 +1215,13 @@ function Personal({ data, persist }) {
                 <input type="number" min={0} value={form.metaMensual || ""} onChange={(e) => setForm({ ...form, metaMensual: e.target.value })} className="input" placeholder="Solo si tiene cuota fija" />
               </Field>
             </div>
+            {avisosPersona.length > 0 && (
+              <div className="text-xs bg-amber-50 border border-amber-200 rounded p-2.5 text-amber-900">
+                <p className="font-medium mb-1 flex items-center gap-1"><AlertTriangle size={12} /> Revisa estos datos</p>
+                {avisosPersona.map((a, i) => <p key={i}>• {a.texto}</p>)}
+                <p className="mt-1 text-amber-700">Puedes guardar igual; el aviso queda hasta que se corrija.</p>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={() => setForm(null)} className="text-sm px-3 py-1.5 rounded border border-slate-300">Cancelar</button>
               <button onClick={save} className="text-sm px-3 py-1.5 rounded bg-pnp-verde text-white">Guardar</button>

@@ -50,12 +50,12 @@ export default function Portada({ tab, setTab, overdueCount, docsVencidos = 0, a
   const tabs = [
     { id: "panel", label: "Panel", icon: LayoutDashboard },
     { id: "tareas", label: "Tareas", icon: ClipboardList },
-    { id: "documentos", label: "Documentos", icon: MailCheck },
+    { id: "documentos", label: "Correspondencia", icon: MailCheck },
     { id: "locadores", label: "Locadores", icon: Briefcase },
     { id: "reportes", label: "Reportes", icon: FileBarChart },
     { id: "consolidado", label: "Consolidado", icon: Table2 },
     { id: "desempeno", label: "Desempeno", icon: TrendingUp },
-    { id: "archivo", label: "Archivo", icon: Archive },
+    { id: "archivo", label: "Archivo fisico", icon: Archive },
     { id: "personal", label: "Personal", icon: Users },
     { id: "respaldo", label: "Respaldo", icon: ShieldCheck },
   ];

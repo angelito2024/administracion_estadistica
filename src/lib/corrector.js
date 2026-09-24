@@ -57,6 +57,15 @@ const TILDES = {
   regimen: "régimen", regulacion: "regulación", relacion: "relación", remision: "remisión",
   rendicion: "rendición", renovacion: "renovación", reparacion: "reparación", repeticion: "repetición",
   representacion: "representación", reproduccion: "reproducción", republica: "república",
+  // Vocabulario de la oficina (contratos, pagos y recorrido de expedientes).
+  // No se incluyen las formas ambiguas: publico/público, practica/práctica,
+  // diagnostico/diagnóstico, envio/envío/envió, capitulo/capítulo.
+  abastecimiento: "abastecimiento", auditoria: "auditoría", auditorias: "auditorías",
+  contaduria: "contaduría", envia: "envía", envian: "envían", fisico: "físico",
+  fisicos: "físicos", logistico: "logístico", prestacion: "prestación",
+  prestaciones: "prestaciones", proxima: "próxima", proximo: "próximo",
+  subsanacion: "subsanación", tesoreria: "tesorería", viatico: "viático",
+  viaticos: "viáticos",
   resolucion: "resolución", restriccion: "restricción", retencion: "retención", reunion: "reunión",
   reuniones: "reuniones", revision: "revisión", sancion: "sanción", satisfaccion: "satisfacción",
   seccion: "sección", segun: "según", seleccion: "selección", sesion: "sesión",
@@ -133,6 +142,43 @@ export const DICCIONARIO = { ...TILDES, ...TIPEO, ...PROPIOS };
 const LETRAS = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ";
 const RE_PALABRA = new RegExp(`[${LETRAS}]+`, "g");
 
+/* ---------- fragmentos intocables ----------
+   Un correo, un enlace o un codigo no son texto en espanol: al corregirlos se
+   destruyen (dirsapol.estadistica@policia.gob.pe -> "DIRSAPOL. Estadistica@policia. Gob. Pe").
+   Se sustituyen por un marcador antes de corregir y se reponen al final.
+   El marcador usa el area privada de Unicode: no son letras, asi que ninguna de
+   las reglas de correccion lo toca. */
+const RE_INTOCABLE = new RegExp(
+  [
+    "(?:https?://|ftp://|www\\.)\\S+", // enlaces
+    "[^\\s@]+@[^\\s@]+\\.[^\\s.,;:!?)]+", // correos
+    `\\b[${LETRAS}\\d][\\w.-]*\\.(?:com|pe|org|net|gob|edu|mil|info|io|app)\\b\\S*`, // dominios
+    `\\b[${LETRAS}]*\\d[\\w/-]*\\b`, // codigos y fechas: PNP0122..., 10/09/2026, UE-020
+    "\\b\\d[\\d.,:/-]*\\d\\b", // cifras con separadores: 7,000.00
+  ].join("|"),
+  "g"
+);
+
+const MARCA_INI = "";
+const MARCA_FIN = "";
+
+function proteger(texto) {
+  const guardados = [];
+  const limpio = texto.replace(RE_INTOCABLE, (m) => {
+    guardados.push(m);
+    return `${MARCA_INI}${guardados.length - 1}${MARCA_FIN}`;
+  });
+  return { limpio, guardados };
+}
+
+function reponer(texto, guardados) {
+  if (!guardados.length) return texto;
+  return texto.replace(
+    new RegExp(`${MARCA_INI}(\\d+)${MARCA_FIN}`, "g"),
+    (_, i) => guardados[Number(i)] ?? ""
+  );
+}
+
 function aplicarMayusculas(original, correccion) {
   // Nombre propio o sigla en el diccionario: se respeta tal cual.
   if (correccion[0] !== correccion[0].toLowerCase()) return correccion;
@@ -146,14 +192,15 @@ export function corregirPalabras(texto, extra = {}) {
   if (!texto) return { texto: texto || "", cambios: [] };
   const dicc = { ...DICCIONARIO, ...extra };
   const cambios = [];
-  const salida = texto.replace(RE_PALABRA, (palabra) => {
+  const { limpio, guardados } = proteger(texto);
+  const salida = limpio.replace(RE_PALABRA, (palabra) => {
     const corr = dicc[palabra.toLowerCase()];
     if (!corr) return palabra;
     const final = aplicarMayusculas(palabra, corr);
     if (final !== palabra) cambios.push({ de: palabra, a: final });
     return final;
   });
-  return { texto: salida, cambios };
+  return { texto: reponer(salida, guardados), cambios };
 }
 
 function arreglarEspaciado(texto) {
@@ -174,11 +221,14 @@ function mayusculaDeOracion(texto) {
 export function corregirTexto(texto, opciones = {}) {
   const { extra = {}, mayusculas = true, espaciado = true } = opciones;
   if (!texto || !texto.trim()) return { texto: texto || "", cambios: [] };
-  const r = corregirPalabras(texto, extra);
+  // Se protege una sola vez para todo el proceso: el espaciado y las mayusculas
+  // de oracion son justamente las reglas que parten los correos y los enlaces.
+  const { limpio, guardados } = proteger(texto);
+  const r = corregirPalabras(limpio, extra);
   let salida = r.texto;
   if (espaciado) salida = arreglarEspaciado(salida);
   if (mayusculas) salida = mayusculaDeOracion(salida);
-  return { texto: salida, cambios: r.cambios };
+  return { texto: reponer(salida, guardados), cambios: r.cambios };
 }
 
 /** Resumen legible de los cambios, para mostrarlo bajo el campo. */

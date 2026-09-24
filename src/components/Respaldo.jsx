@@ -1,5 +1,8 @@
 import { useRef, useState } from "react";
-import { Download, Upload, ShieldCheck, AlertTriangle, RotateCcw, Database, SpellCheck2 } from "lucide-react";
+import { Download, Upload, ShieldCheck, AlertTriangle, RotateCcw, Database, SpellCheck2, FolderSync, FolderCheck, X } from "lucide-react";
+import {
+  soportaCarpeta, elegirCarpeta, quitarCarpeta, respaldarEnCarpeta, leerEstado, COPIAS_A_CONSERVAR,
+} from "../lib/respaldoAuto";
 import { todayStr, fmtDate, diffDays, lastNMonths, monthKey } from "../lib/fechas";
 import {
   exportarRespaldo,
@@ -126,6 +129,8 @@ export default function Respaldo({ data, persist, staffById }) {
         </div>
       )}
 
+      <RespaldoAutomatico data={data} onMensaje={setMensaje} />
+
       <div>
         <h3 className="text-sm font-medium text-slate-700 mb-1">Respaldo completo</h3>
         <p className="text-xs text-slate-500 mb-3">
@@ -245,11 +250,152 @@ export default function Respaldo({ data, persist, staffById }) {
       <div className="text-xs text-slate-500 border-t border-slate-200 pt-4">
         <p className="font-medium text-slate-600 mb-1">Recomendacion</p>
         <p>
-          Descarga el respaldo cada viernes y guardalo en la carpeta de red de la oficina o en una USB. Si mas
-          adelante varias personas necesitan ver la misma informacion desde distintas PCs, hara falta una base de
-          datos compartida en vez de este almacenamiento local.
+          Configura la carpeta de respaldo automatico: es lo unico que protege la informacion si falla esta PC,
+          porque las copias del navegador se pierden junto con los datos. Si mas adelante varias personas necesitan
+          ver la misma informacion desde distintas PCs, hara falta una base de datos compartida en vez de este
+          almacenamiento local.
         </p>
       </div>
+    </div>
+  );
+}
+
+/* ---------- respaldo automatico a una carpeta del equipo o de la red ---------- */
+function RespaldoAutomatico({ data, onMensaje }) {
+  const [estado, setEstado] = useState(() => leerEstado());
+  const [ocupado, setOcupado] = useState(false);
+  const disponible = soportaCarpeta();
+
+  async function configurar() {
+    setOcupado(true);
+    try {
+      const nombre = await elegirCarpeta();
+      const r = await respaldarEnCarpeta(data, { pedirPermiso: true });
+      setEstado(leerEstado());
+      onMensaje(
+        r.ok
+          ? { tipo: "ok", texto: `Carpeta "${nombre}" configurada. Se guardo ${r.archivo} y se repetira solo, una vez al dia.` }
+          : { tipo: "error", texto: "La carpeta quedo configurada, pero no se pudo escribir el primer respaldo." }
+      );
+    } catch (e) {
+      // El usuario puede cerrar el selector de carpetas: eso no es un error que reportar.
+      if (e.name !== "AbortError") onMensaje({ tipo: "error", texto: e.message });
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function guardarAhora() {
+    setOcupado(true);
+    try {
+      const r = await respaldarEnCarpeta(data, { pedirPermiso: true });
+      setEstado(leerEstado());
+      onMensaje(
+        r.ok
+          ? { tipo: "ok", texto: `Respaldo guardado en la carpeta: ${r.archivo}` }
+          : {
+              tipo: "error",
+              texto:
+                r.motivo === "sin-permiso"
+                  ? "El navegador retiro el permiso sobre la carpeta. Vuelve a configurarla."
+                  : "No se pudo escribir en la carpeta. Revisa que siga disponible.",
+            }
+      );
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function desconectar() {
+    if (!window.confirm("¿Dejar de respaldar automaticamente en esa carpeta? Los archivos ya guardados no se borran.")) return;
+    await quitarCarpeta();
+    setEstado(null);
+    onMensaje({ tipo: "ok", texto: "Respaldo automatico desactivado." });
+  }
+
+  if (!disponible) {
+    return (
+      <div className="border border-slate-200 rounded p-3">
+        <h3 className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+          <FolderSync size={15} /> Respaldo automatico
+        </h3>
+        <p className="text-xs text-slate-500">
+          Este navegador no permite guardar en una carpeta. Abre la aplicacion en Microsoft Edge o Chrome para
+          activarlo, o descarga el respaldo a mano cada semana.
+        </p>
+      </div>
+    );
+  }
+
+  const activo = !!estado?.carpeta;
+  const alDia = estado?.ultimo === todayStr();
+
+  return (
+    <div className={`border rounded p-3 ${activo ? "border-emerald-200 bg-emerald-50/40" : "border-amber-300 bg-amber-50"}`}>
+      <h3 className="text-sm font-medium text-slate-700 mb-1 flex items-center gap-1.5">
+        {activo ? <FolderCheck size={15} className="text-emerald-700" /> : <FolderSync size={15} className="text-amber-700" />}
+        Respaldo automatico a una carpeta
+      </h3>
+
+      {activo ? (
+        <>
+          <p className="text-xs text-slate-600">
+            Carpeta: <b className="text-slate-800">{estado.carpeta}</b>
+            {estado.ultimo ? (
+              <>
+                {" · ultimo "}
+                <b className={alDia ? "text-emerald-700" : "text-amber-700"}>
+                  {fmtDate(estado.ultimo)}
+                  {estado.hora ? ` (${estado.hora.split(" ")[1] || ""})` : ""}
+                </b>
+              </>
+            ) : (
+              " · aun sin escribir"
+            )}
+          </p>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Se guarda solo una vez al dia al abrir la aplicacion y se conservan los ultimos {COPIAS_A_CONSERVAR} dias.
+          </p>
+          <div className="flex gap-2 flex-wrap mt-2">
+            <button
+              onClick={guardarAhora}
+              disabled={ocupado}
+              className="flex items-center gap-1.5 text-xs border border-slate-300 bg-white rounded px-2.5 py-1.5 text-slate-700 hover:border-pnp-verde disabled:opacity-50"
+            >
+              <Download size={13} /> Guardar ahora
+            </button>
+            <button
+              onClick={configurar}
+              disabled={ocupado}
+              className="text-xs border border-slate-300 bg-white rounded px-2.5 py-1.5 text-slate-600 hover:border-slate-400 disabled:opacity-50"
+            >
+              Cambiar carpeta
+            </button>
+            <button
+              onClick={desconectar}
+              disabled={ocupado}
+              className="flex items-center gap-1 text-xs border border-slate-300 bg-white rounded px-2.5 py-1.5 text-slate-500 hover:border-rose-400 hover:text-rose-700 disabled:opacity-50"
+            >
+              <X size={13} /> Desactivar
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-amber-900">
+            Las copias del navegador se pierden junto con los datos si se limpia el historial o falla la PC.
+            Elige una carpeta —de la red de la oficina, o una USB— y la aplicacion guardara ahi el respaldo sola,
+            una vez al dia.
+          </p>
+          <button
+            onClick={configurar}
+            disabled={ocupado}
+            className="flex items-center gap-1.5 text-sm bg-pnp-verde text-white rounded px-3 py-2 mt-2 disabled:opacity-50"
+          >
+            <FolderSync size={15} /> Elegir carpeta de respaldo
+          </button>
+        </>
+      )}
     </div>
   );
 }

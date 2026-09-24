@@ -125,8 +125,36 @@ export function dniDesdeRuc(ruc) {
   return /^10\d{9}$/.test(r) ? r.slice(2, 10) : null;
 }
 
-function esCorreo(c) {
+export function esCorreo(c) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((c || "").trim());
+}
+
+/**
+ * Revisa los datos de una persona del area. Mismos criterios que para los
+ * locadores, para que los avisos digan siempre lo mismo en toda la aplicacion.
+ */
+export function revisarPersona(p, otros = []) {
+  const avisos = [];
+  const dni = (p.dni || "").trim();
+  const tel = (p.phone || "").replace(/\s|-/g, "");
+
+  if (dni && !/^\d{8}$/.test(dni)) avisos.push({ campo: "dni", texto: `El DNI "${dni}" no tiene 8 digitos.` });
+  if (dni) {
+    const repetido = otros.find((o) => o.id !== p.id && (o.dni || "").trim() === dni);
+    if (repetido) avisos.push({ campo: "dni", texto: `Ese DNI ya esta registrado en ${repetido.name}.` });
+  }
+  if (tel && !/^9\d{8}$/.test(tel)) {
+    avisos.push({ campo: "phone", texto: `El celular "${p.phone}" no tiene 9 digitos empezando por 9.` });
+  }
+  if (p.email && !esCorreo(p.email)) avisos.push({ campo: "email", texto: `El correo "${p.email}" no parece valido.` });
+  if (p.birthday && !/^\d{2}\/\d{2}$/.test(p.birthday.trim())) {
+    avisos.push({ campo: "birthday", texto: `El cumpleanos "${p.birthday}" debe ir como DD/MM.` });
+  }
+  const meta = (p.metaMensual || "").toString().trim();
+  if (meta && (!/^\d+$/.test(meta) || Number(meta) === 0)) {
+    avisos.push({ campo: "metaMensual", texto: "La meta mensual debe ser un numero mayor que cero." });
+  }
+  return avisos;
 }
 
 /**

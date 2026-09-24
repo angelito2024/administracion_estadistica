@@ -64,18 +64,46 @@ export function listarCopias() {
   }
 }
 
-export function guardarCopiaDiaria(data) {
+/** True si el error de localStorage es por falta de espacio. */
+export function esCuotaLlena(e) {
+  if (!e) return false;
+  return (
+    e.name === "QuotaExceededError" ||
+    e.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    e.code === 22 ||
+    e.code === 1014
+  );
+}
+
+/** Borra las copias automaticas para liberar espacio. No toca los datos reales. */
+export function limpiarCopias() {
   try {
-    const copias = listarCopias();
-    const hoy = todayStr();
-    const sinHoy = copias.filter((c) => c.fecha !== hoy);
-    const nueva = { fecha: hoy, hora: fmtFechaHora(), json: JSON.stringify(data) };
-    const next = [nueva, ...sinHoy].slice(0, MAX_SNAPSHOTS);
-    window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(next));
-    return next;
+    window.localStorage.removeItem(SNAPSHOT_KEY);
   } catch (e) {
-    return listarCopias();
+    // si ni siquiera se puede borrar, no hay nada mas que hacer aqui
   }
+}
+
+/**
+ * Guarda la copia del dia. Si no hay espacio, va descartando las copias mas
+ * antiguas antes que fallar: mantener el dato real guardado es lo prioritario.
+ */
+export function guardarCopiaDiaria(data) {
+  const hoy = todayStr();
+  const nueva = { fecha: hoy, hora: fmtFechaHora(), json: JSON.stringify(data) };
+  let candidatas = [nueva, ...listarCopias().filter((c) => c.fecha !== hoy)].slice(0, MAX_SNAPSHOTS);
+
+  while (candidatas.length) {
+    try {
+      window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(candidatas));
+      return candidatas;
+    } catch (e) {
+      if (!esCuotaLlena(e)) return listarCopias();
+      candidatas = candidatas.slice(0, -1); // fuera la mas antigua y se reintenta
+    }
+  }
+  limpiarCopias();
+  return [];
 }
 
 export function restaurarCopia(fecha) {

@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Pencil, X, Phone, Mail, AlertTriangle, FileText, CheckCircle2,
   ChevronRight, Download, CircleDollarSign, Clock, Undo2,
 } from "lucide-react";
-import { todayStr, fmtDate, diffDays, monthKey, monthLabel, uid } from "../lib/fechas";
+import { todayStr, fmtDate, diffDays, monthKey, monthLabel, uid, limpiarRegistro } from "../lib/fechas";
 import CampoTexto from "./CampoTexto";
 import {
   RECORRIDO_CONTRATO, RECORRIDO_PAGO, REQUISITOS_CONTRATO, REQUISITOS_PAGO,
@@ -170,7 +170,8 @@ export default function Locadores({ data, persist }) {
   function guardar() {
     if (!form.nombre.trim()) return;
     const existe = locadores.some((l) => l.id === form.id);
-    guardarLocadores(existe ? locadores.map((l) => (l.id === form.id ? form : l)) : [...locadores, { ...form, id: uid() }]);
+    const limpio = limpiarRegistro(form);
+    guardarLocadores(existe ? locadores.map((l) => (l.id === form.id ? limpio : l)) : [...locadores, { ...limpio, id: uid() }]);
     setForm(null);
   }
 

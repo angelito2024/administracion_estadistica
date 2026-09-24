@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Plus, Trash2, Pencil, MailCheck, AlertTriangle, Clock, Search, X } from "lucide-react";
-import { todayStr, fmtDate, daysDiff, sumarDias, uid, monthKey } from "../lib/fechas";
+import { todayStr, fmtDate, daysDiff, sumarDias, uid, monthKey, limpiarRegistro } from "../lib/fechas";
 import CampoTexto from "./CampoTexto";
 
 export const TIPOS_DOC = ["Oficio", "Memorando", "Informe", "Carta", "Solicitud", "Correo electronico", "Resolucion", "Otro"];
@@ -59,8 +59,8 @@ export default function Documentos({ data, persist, staffById }) {
     if (!form.asunto.trim()) return;
     const existe = documentos.some((d) => d.id === form.id);
     const next = existe
-      ? documentos.map((d) => (d.id === form.id ? form : d))
-      : [...documentos, { ...form, id: uid(), registradoEl: todayStr() }];
+      ? documentos.map((d) => (d.id === form.id ? limpiarRegistro(form) : d))
+      : [...documentos, { ...limpiarRegistro(form), id: uid(), registradoEl: todayStr() }];
     persist({ ...data, documentos: next });
     setForm(null);
   }

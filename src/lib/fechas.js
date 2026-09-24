@@ -28,6 +28,20 @@ export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
+/**
+ * Limpia los textos de un registro antes de guardarlo: quita espacios al inicio
+ * y al final y colapsa los repetidos. Sin esto quedan nombres como
+ * "YANGUA JIMENEZ LUIS GUSTAVO ", que descuadran busquedas y ordenaciones.
+ * No toca numeros, booleanos, fechas ni objetos anidados (tramites, historiales).
+ */
+export function limpiarRegistro(obj) {
+  const out = { ...obj };
+  for (const [k, v] of Object.entries(out)) {
+    if (typeof v === "string") out[k] = v.trim().replace(/[ \t]{2,}/g, " ");
+  }
+  return out;
+}
+
 export function fmtDate(dateStr) {
   if (!dateStr) return "—";
   const [y, m, d] = dateStr.split("-");
